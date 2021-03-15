@@ -1,0 +1,115 @@
+---
+title:  | 
+        | American Psychological Association
+        |  Research Methods - 
+        |  Recursive Partitioning
+author: |
+        | Kevin J. Grimm, Ross Jacobucci, & 
+        | John J. McArdle
+date: "Spring, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Hosmer and Lemeshow (2000) Coronary Heart Disease Data
+
+```{r}
+chdage = read.table('E:/kjgrimm/Documents/ASU/APA Handbook - 2021/CART/Data/chdage.dat')
+names(chdage) = c('id','age','chd')
+head(chdage)
+summary(chdage)
+```
+
+## Logistic Regression
+
+```{r}
+# Center age at 50 years and divide by 10
+chdage$age50d = (chdage$age - 50)/10
+
+logit1 = glm(chd ~ age50d, chdage, family = binomial)
+summary(logit1)
+exp(coef(logit1)[2])
+
+# Plotting Association
+x=seq(-3, 2, by=.01)
+lodds = coef(logit1)[1] + coef(logit1)[2] * x
+odds = exp(lodds)
+p = odds/(1 + odds)
+
+# Temporary Dataset
+temp = data.frame(x,lodds,odds,p)
+temp$x_new = x * 10 + 50
+
+library(ggplot2)
+ggplot(temp, aes(x = x_new, y=p)) + geom_line(color='blue', size=4) +
+scale_x_continuous(limits=c(20,70), breaks=c(20,30,40,50,60,70), name='Age') +
+scale_y_continuous(limits=c(0,1), breaks=c(0,.2,.4,.6,.8,1), name='Probability of Coronary Heart Disease')
+
+```
+
+## Recursive Partitioning with rpart
+```{r}
+library(rpart)
+
+# Adjusting stopping criteria to encourage tree growth
+tree_cntl = rpart.control(minsplit = 5, cp = .00001)
+
+# Classification Tree with rpart
+rpart1 = rpart(as.factor(chd) ~ age, chdage, control = tree_cntl)
+summary(rpart1)
+
+# Initial Decision Tree
+library(rpart.plot)
+rpart.plot(rpart1)
+
+# Plotting Association
+x=seq(20, 70, by=.1)
+for(i in 1:length(x)){
+  if(x[i] < 39){p[i] = .14}else
+  if(x[i] >= 39 & x[i] < 44){p[i] = .31}
+  if(x[i] >= 44 & x[i] < 48){p[i] = .45}
+  if(x[i] >= 48 & x[i] < 49){p[i] = .67}
+  if(x[i] >= 49 & x[i] < 53){p[i] = .38}
+  if(x[i] >= 53){p[i] = .80}
+}
+
+# Temporary Dataset
+temp = data.frame(x,p)
+
+ggplot(temp, aes(x = x, y=p)) + geom_line(color='blue', size=3) +
+scale_x_continuous(limits=c(20,70), breaks=c(20,30,40,50,60,70), name='Age') +
+scale_y_continuous(limits=c(0,1), breaks=c(0,.2,.4,.6,.8,1), name='Probability of Coronary Heart Disease')
+
+# cp parameter associated with the tree with smallest cross-validated error
+min_xerror_loc = which.min(rpart1$cptable[,4])
+
+# Final decision tree
+rpart2 = prune(rpart1, cp=rpart1$cptable[min_xerror_loc,1]+.00001)
+rpart.plot(rpart2)
+
+# Examining Explained Variance
+chdage$age_c = NA
+chdage[chdage$age >= 53, 'age_c'] = 1
+chdage[chdage$age <  53, 'age_c'] = 0
+
+logit2 = glm(chd ~ age_c, chdage, family = binomial)
+summary(logit2)
+
+# Plotting Association
+x=seq(20, 70, by=.1)
+for(i in 1:length(x)){
+  if(x[i] < 53){p[i] = .27}else(p[i] = .80)
+}
+
+# Temporary Dataset
+temp = data.frame(x,p)
+
+ggplot(temp, aes(x = x, y=p)) + geom_line(color='blue', size=3) +
+scale_x_continuous(limits=c(20,70), breaks=c(20,30,40,50,60,70), name='Age') +
+scale_y_continuous(limits=c(0,1), breaks=c(0,.2,.4,.6,.8,1), name='Probability of Coronary Heart Disease')
+```
+
+

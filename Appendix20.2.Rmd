@@ -1,0 +1,239 @@
+---
+title:  | 
+        |  Recursive Partitioning - 
+        |  Empirical Example
+author: |
+        | Kevin J. Grimm, Ross Jacobucci, & 
+        | John J. McArdle
+date: "Spring, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Diabetes Data
+
+```{r}
+## Reading in Data
+diabetes = read.csv('E:/SH_ML/Data/diabetes.csv')
+
+diabetes = diabetes[,c(-4,-5,-7)]
+
+## Basic Descriptives
+summary(diabetes)
+
+## Data Cleaning
+diabetes = diabetes[diabetes$Glucose > 0 & diabetes$BMI > 0 & 
+                    diabetes$BloodPressure > 0,]
+
+summary(diabetes)
+
+dim(diabetes)
+```
+
+## Training & Testing Datasets
+```{r}
+set.seed(20210224)
+
+# Training & Testing Datasets
+diabetes$test = NA
+for(i in 1:nrow(diabetes)){
+  if(runif(1,0,1) > .7){diabetes$test[i] = 1}else diabetes$test[i] = 0
+}
+summary(diabetes)
+
+training = diabetes[diabetes$test == 0,]
+testing  = diabetes[diabetes$test == 1,]
+
+# Removing test variable
+training = training[,-7]
+```
+
+## Recursive Partitioning with rpart
+```{r}
+set.seed(20010824)
+
+library(rpart)
+
+# Adjusting stopping criteria to encourage tree growth
+rpartControl = rpart.control(minsplit = 5, cp = .005)
+
+# Classification Tree with rpart
+rpart1 = rpart(as.factor(Outcome) ~ ., training, control = rpartControl)
+summary(rpart1)
+
+# Initial Decision Tree
+library(rpart.plot)
+
+# cp parameter associated with the tree with smallest cross-validated error
+min_xerror_loc = which.min(rpart1$cptable[,4])
+
+# Final decision tree
+rpart2 = prune(rpart1, cp=rpart1$cptable[min_xerror_loc,1]+.00001)
+rpart.plot(rpart2)
+```
+
+## Conditional Inference Trees
+```{r}
+set.seed(20000524)
+
+library(partykit)
+
+ctreeControl = ctree_control(testtype='Bonferroni')
+ctree1 = ctree(as.factor(Outcome) ~ ., training, control = ctreeControl)
+ctree1
+
+plot(ctree1)
+```
+
+## Evolutionary Trees
+```{r}
+set.seed(19960624)
+
+library(evtree)
+
+evControl = evtree.control(pmutateminor = 0.2, pmutatemjor = .2,
+                           pcrossover = 0.2, psplit = 0.2, 
+                           pprune = 0.2, ntrees = 200, 
+                           seed = 20210224)
+
+
+evtree1 = evtree(as.factor(Outcome) ~ ., training, control = evControl)
+
+evtree1
+
+plot(evtree1)
+```
+
+
+## Bagging
+```{r}
+set.seed(19691016)
+
+library(randomForest)
+
+bag1 = randomForest(as.factor(Outcome) ~ . , data=training, 
+                    mtry = ncol(training)-1,
+                    importance = TRUE,
+                    ntree = 10000)
+plot(bag1)
+# Determine optimal number of trees
+optNum = which.min(bag1$err.rate[1:10000])
+optNum
+
+# Refit with the otpimal number of trees
+set.seed(19691016)
+
+bag2 = randomForest(as.factor(Outcome) ~ . , training, 
+                    mtry = ncol(training)-1,
+                    importance = TRUE,
+                    ntree = optNum)
+
+# Variable Importance
+importance(bag2)
+varImpPlot(bag2)
+```
+
+## Random Forest
+```{r}
+set.seed(19701105)
+
+# Tuning Random Forest to determine optimal number of variables per split
+rf1 = rfcv(training[,-6], as.factor(training[,6]), step = .95, cv.folds = 10)
+
+rf1$error.cv
+
+which.min(rf1$error.cv)
+
+# Running Random Forest with the optimal number of variables per split
+set.seed(19861025)
+
+rf2 = randomForest(as.factor(Outcome) ~ ., training,
+                   mtry = 3, ntree = 10000)
+OptNum = which.min(rf2$err.rate[1:10000])
+OptNum
+
+set.seed(19861025)
+
+rf3 = randomForest(as.factor(Outcome) ~ ., training,
+                   mtry = 3, importance = TRUE, 
+                   ntree = OptNum)
+
+# Variable Importance
+importance(rf3)
+varImpPlot(rf3)
+```
+
+
+## Comparison of Approaches with Bootstrapping
+```{r}
+library(boot)
+
+# Function for Accuracy for rpart
+fRpart <- function(data, i){
+  d2 = data[i,]
+  class = c()
+  for(j in 1:nrow(d2)){
+    if(predict(rpart2, newdata = d2)[j,2]>.5){class[j] = 1} else class[j] = 0
+  }
+  rpartConfusion = table(class, d2$Outcome)
+  rpartAcc = sum(diag(rpartConfusion))/nrow(d2)
+  return(rpartAcc)
+}
+
+BootRpartAcc <- boot(testing, fRpart, R=1000)
+BootRpartAcc
+boot.ci(BootRpartAcc, type = c("norm","basic","perc","bca"), conf = 0.95)
+        
+# Function for Accuracy for ctree
+fCtree <- function(data, i){
+  d2 = data[i,]
+  ctreeConfusion = table(predict(ctree1, newdata = d2), d2$Outcome)
+  ctreeAcc = sum(diag(ctreeConfusion))/nrow(d2)
+  return(ctreeAcc)
+}
+
+BootCtreeAcc <- boot(testing, fCtree, R=1000)
+BootCtreeAcc
+boot.ci(BootCtreeAcc, type = c("norm","basic","perc","bca"), conf = 0.95)
+
+# Function for Accuracy for evtree
+fEvtree <- function(data, i){
+  d2 = data[i,]
+  evtreeConfusion = table(predict(evtree1, newdata = d2), d2$Outcome)
+  evtreeAcc = sum(diag(evtreeConfusion))/nrow(d2)
+  return(evtreeAcc)
+}
+
+BootEvtreeAcc <- boot(testing, fEvtree, R=1000)
+BootEvtreeAcc
+boot.ci(BootEvtreeAcc, type = c("norm","basic","perc","bca"), conf = 0.95)
+
+# Function for Accuracy for Bagging
+fBag <- function(data, i){
+  d2 = data[i,]
+  bagConfusion = table(predict(bag2, newdata = d2), d2$Outcome)
+  bagAcc = sum(diag(bagConfusion))/nrow(d2)
+  return(bagAcc)
+}
+
+bootBagAcc <- boot(testing, fBag, R=1000)
+bootBagAcc
+boot.ci(bootBagAcc, type = c("norm","basic","perc","bca"), conf = 0.95)
+
+# Function for Accuracy for Random Forests
+fRf <- function(data, i){
+  d2 = data[i,]
+  RfConfusion = table(predict(rf3, newdata = d2), d2$Outcome)
+  RfAcc = sum(diag(RfConfusion))/nrow(d2)
+  return(RfAcc)
+}
+
+bootRfAcc <- boot(testing, fRf, R=1000)
+bootRfAcc
+boot.ci(bootRfAcc, type = c("norm","basic","perc","bca"), conf = 0.95)
+
+```
+
